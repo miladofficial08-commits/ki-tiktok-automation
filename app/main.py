@@ -301,6 +301,45 @@ def produce_karaoke_v2():
         production_lock.release()
 
 
+@api.post("/api/produce-agent-v3", dependencies=[Depends(auth)])
+def produce_agent_v3():
+    """Produce one labeled 3D concept explainer; Telegram review only."""
+    if not production_lock.acquire(blocking=False):
+        raise HTTPException(status_code=429, detail="Render already in progress")
+    try:
+        from . import agent_v3
+        label = "agent-explainer-v3-20261017"
+        job_id = hashlib.sha256(label.encode()).hexdigest()[:16]
+        folder = DATA / "runs" / job_id
+        manifest = folder / "manifest.json"
+        if manifest.is_file():
+            return json.loads(manifest.read_text(encoding="utf-8"))
+        folder.mkdir(parents=True, exist_ok=True)
+        clip = agent_v3.render(folder)
+        quality = {
+            "ok": False,
+            "reasons": ["Konzeptvisualisierung - echte Produktdemonstration noch nicht verifiziert",
+                        "Manuelle Pruefung von Sprache, Szenen und Timing erforderlich"],
+            "auto_publish": False,
+        }
+        candidate = {
+            "id": label, "title": "Wie ein KI-Agent wirklich arbeitet (3D Konzept-Erklaervideo)",
+            "url": "https://github.com/miladofficial08-commits/ki-tiktok-automation",
+            "source": "own_3d_explainer", "score": 0,
+        }
+        output = {
+            "job_id": job_id, "candidate": candidate, "render": clip,
+            "qa": quality, "status": "pending_review", "published": False, "scheduled": False,
+        }
+        manifest.write_text(json.dumps(output, ensure_ascii=False, indent=2), encoding="utf-8")
+        from .notifications import notify_production
+        output["telegram"] = notify_production(output)
+        manifest.write_text(json.dumps(output, ensure_ascii=False, indent=2), encoding="utf-8")
+        return output
+    finally:
+        production_lock.release()
+
+
 # Native daily scheduling is a fallback; n8n orchestration can replace it after API setup.
 @api.on_event("startup")
 def start_background_services():
