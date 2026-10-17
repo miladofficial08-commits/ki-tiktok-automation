@@ -243,6 +243,34 @@ def get_job(job_id: str):
         raise HTTPException(status_code=404, detail="Not found")
     return json.loads(manifest.read_text(encoding="utf-8"))
 
+@api.post("/api/produce-motion", dependencies=[Depends(auth)])
+def produce_motion():
+    """Controlled motion demonstration with a Telegram review; no public publishing."""
+    if not production_lock.acquire(blocking=False):
+        raise HTTPException(429, "Another render is running")
+    try:
+        from . import motion
+        tag = "motion-demo-20261017-v1"
+        job_id = hashlib.sha256(tag.encode()).hexdigest()[:16]
+        folder = DATA / "runs" / job_id
+        manifest = folder / "manifest.json"
+        if manifest.is_file():
+            return json.loads(manifest.read_text(encoding="utf-8"))
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "processing.json").write_text(json.dumps({"status": "started", "job_id": job_id}))
+        preview = motion.render(folder)
+        quality = {"ok": False, "reasons": ["Konzept-Demo, keine echte KI-gebaute Live-App", "Manuelle Redaktionsprüfung ausstehend"], "auto_publish": False}
+        candidate = {"id": tag, "title": "Eine Idee wird zum Habit Tracker (Konzept-Demo)", "url": "https://github.com/miladofficial08-commits/ki-tiktok-automation", "source": "concept_demo", "score": 0}
+        output = {"job_id": job_id, "candidate": candidate, "render": preview, "qa": quality, "status": "pending_review", "published": False, "scheduled": False}
+        manifest.write_text(json.dumps(output, ensure_ascii=False, indent=2), encoding="utf-8")
+        from .notifications import notify_production
+        output["telegram"] = notify_production(output)
+        manifest.write_text(json.dumps(output, ensure_ascii=False, indent=2), encoding="utf-8")
+        return output
+    finally:
+        production_lock.release()
+
+
 # Native daily scheduling is a fallback; n8n orchestration can replace it after API setup.
 @api.on_event("startup")
 def start_background_services():
