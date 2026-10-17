@@ -5,6 +5,7 @@ No incoming public webhook and no TikTok publishing.
 from __future__ import annotations
 import hmac
 import json
+import logging
 import os
 from pathlib import Path
 import threading
@@ -16,6 +17,25 @@ ROOT.mkdir(parents=True, exist_ok=True)
 STATE = ROOT / "telegram-pair.json"
 OFFSET = ROOT / "telegram-offset.json"
 STATE_LOCK = threading.Lock()
+LOG = logging.getLogger("studio.telegram")
+TOKEN_CHECK = "not_checked"
+POLL_CHECK = "not_started"
+
+def telegram_diagnostics() -> dict:
+    """Status only. Never returns secret tokens or chat identifiers."""
+    return {"bot_token_validation": TOKEN_CHECK, "get_updates": POLL_CHECK,
+            "chat_paired": paired_chat_id() is not None}
+
+def _set_check(kind: str, state: str):
+    global TOKEN_CHECK, POLL_CHECK
+    previous = TOKEN_CHECK if kind == "token" else POLL_CHECK
+    if kind == "token":
+        TOKEN_CHECK = state
+    else:
+        POLL_CHECK = state
+    if previous != state:
+        LOG.info("Telegram %s status: %s", kind, state)
+
 
 def _bot_token() -> str:
     return os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
@@ -123,22 +143,40 @@ def polling_loop():
     offset = _offset_value()
     while True:
         if not _bot_token():
+            _set_check("token", "missing")
             time.sleep(30)
             continue
         try:
             with httpx.Client(timeout=38) as client:
+                if TOKEN_CHECK != "valid":
+                    check = client.get(_api("getMe"), timeout=12)
+                    valid = check.status_code == 200 and bool(check.json().get("ok"))
+                    _set_check("token", "valid" if valid else f"invalid_http_{check.status_code}")
+                    if not valid:
+                        time.sleep(30)
+                        continue
                 r = client.get(_api("getUpdates"), params={
                     "offset": offset, "timeout": 24,
                     "allowed_updates": json.dumps(["message"]),
                     "limit": 20
                 })
-                r.raise_for_status()
-                for item in r.json().get("result", []):
+                if r.status_code != 200:
+                    _set_check("poll", f"http_{r.status_code}")
+                    time.sleep(15)
+                    continue
+                response = r.json()
+                if not response.get("ok", False):
+                    _set_check("poll", "telegram_api_error")
+                    time.sleep(15)
+                    continue
+                _set_check("poll", "ok")
+                for item in response.get("result", []):
                     offset = max(offset, int(item["update_id"]) + 1)
                     _save_json(OFFSET, {"offset": offset})
                     _handle(item)
-        except Exception:
-            # Transient Telegram outages are not a reason to crash the app.
+        except (httpx.HTTPError, ValueError, OSError, KeyError, TypeError):
+            # Never log request URLs: they contain Telegram bot tokens.
+            _set_check("poll", "transport_or_processing_error")
             time.sleep(15)
 
 def start_polling():
