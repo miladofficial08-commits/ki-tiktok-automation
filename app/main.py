@@ -251,6 +251,8 @@ def start_background_services():
     start_polling()
     start_scheduler()
     start_first_preview_test()
+    from .voice_test import start as start_voice_test
+    start_voice_test()
 
 @api.get("/api/status", dependencies=[Depends(auth)])
 def studio_status():
