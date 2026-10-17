@@ -35,3 +35,30 @@ def make_voice(text: str, target: Path) -> Path:
         target.parent.mkdir(parents=True,exist_ok=True)
         target.write_bytes(res.content)
     return target
+
+def make_voice_aligned(text: str, target: Path):
+    """Generate MP3 plus character-level timing in one paid TTS call."""
+    import base64, json
+    if not available(): raise RuntimeError("ElevenLabs credentials missing")
+    voice_id = os.environ["ELEVENLABS_VOICE_ID"].strip()
+    if not (voice_id.isalnum() and len(voice_id)<=64): raise ValueError("Invalid voice ID")
+    if len(text)>4500: raise ValueError("Voice text too long")
+    model=os.getenv("ELEVENLABS_MODEL","eleven_multilingual_v2")
+    url=f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/with-timestamps?output_format=mp3_44100_128"
+    settings={"stability":float(os.getenv("ELEVENLABS_STABILITY","0.36")),
+              "similarity_boost":float(os.getenv("ELEVENLABS_SIMILARITY","0.77")),
+              "style":float(os.getenv("ELEVENLABS_STYLE","0.38")),
+              "speed":float(os.getenv("ELEVENLABS_SPEED","1.05")),
+              "use_speaker_boost":True}
+    with httpx.Client(timeout=125) as client:
+        resp=client.post(url,headers={"xi-api-key":os.environ["ELEVENLABS_API_KEY"],"content-type":"application/json"},
+                         json={"text":text,"model_id":model,"voice_settings":settings})
+        if resp.status_code!=200: raise RuntimeError(f"ElevenLabs aligned speech HTTP {resp.status_code}")
+        body=resp.json()
+    audio=base64.b64decode(body["audio_base64"],validate=True)
+    alignment=body.get("alignment") or body.get("normalized_alignment")
+    if not alignment or not alignment.get("characters"): raise RuntimeError("No word alignment received")
+    target.parent.mkdir(parents=True,exist_ok=True)
+    target.write_bytes(audio)
+    target.with_suffix(".alignment.json").write_text(json.dumps(alignment,ensure_ascii=False),encoding="utf-8")
+    return target,alignment
