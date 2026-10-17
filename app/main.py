@@ -151,11 +151,17 @@ def render(folder: Path, story: dict) -> dict:
     for i, scene in enumerate(story["scenes"]):
         make_image(folder / f"frame_{i:02d}.png", scene, i)
     narration = ". ".join(str(s["narration"]) for s in story["scenes"])
-    audio = folder / "voice.wav"
-    voice_cmd = subprocess.run(["espeak-ng", "-v", "de", "-s", "155", "-w", str(audio), narration],
-                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=45)
-    if voice_cmd.returncode:
-        raise RuntimeError("Voice synthesis failed")
+    from .voice import available, make_voice
+    engine = "espeak-ng-demo"
+    if available():
+        audio = make_voice(narration, folder / "voice.mp3")
+        engine = "elevenlabs"
+    else:
+        audio = folder / "voice.wav"
+        voice_cmd = subprocess.run(["espeak-ng", "-v", "de", "-s", "155", "-w", str(audio), narration],
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=45)
+        if voice_cmd.returncode:
+            raise RuntimeError("Voice synthesis failed")
     target = folder / "preview.mp4"
     video_cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
                  "-framerate", "1/8", "-i", str(folder / "frame_%02d.png"),
@@ -169,7 +175,7 @@ def render(folder: Path, story: dict) -> dict:
         raise RuntimeError("Video render timed out") from e
     if p.returncode:
         raise RuntimeError("Video rendering failed")
-    return {"video_path": str(target), "voice_engine": "espeak-ng-demo", "production_quality": False}
+    return {"video_path": str(target), "voice_engine": engine, "production_quality": False}
 
 
 def qa_check(meta: dict, story: dict):
