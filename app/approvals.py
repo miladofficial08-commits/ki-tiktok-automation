@@ -21,7 +21,10 @@ def register(job):
         jid=job["job_id"]
         existing=read(jid)
         if existing: return existing
-        record={"job_id":jid,"status":"pending","version":int(job.get("review_version",1)),
+        candidate = job["candidate"]
+        match = re.search(r"-v([2-9])$", str(candidate.get("id","")))
+        version = int(match.group(1)) if match else 1
+        record={"job_id":jid,"status":"pending","version":version,
                 "candidate":job["candidate"],"video_sent":False,"approved":False,
                 "created_at":datetime.now(timezone.utc).isoformat(),"posted":False}
         write(record);return record
