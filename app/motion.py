@@ -110,12 +110,18 @@ def frame(k,t):
 def duration(path):
     c=subprocess.run(["ffprobe","-v","error","-show_entries","format=duration","-of","default=noprint_wrappers=1:nokey=1",str(path)],capture_output=True,text=True,check=True,timeout=12)
     return float(c.stdout.strip())
-def render(folder,version=1):
-    from .voice import available,make_voice
+def render(folder,version=1, karaoke=False):
+    from .voice import available,make_voice,make_voice_aligned
     folder=Path(folder);folder.mkdir(parents=True,exist_ok=True)
     narration=" ".join(x[1] for x in SCENES)
     if available():
-        audio=make_voice(narration,folder/"voice-motion.mp3")
+        if karaoke:
+            audio, alignment = make_voice_aligned(narration,folder/"voice-motion-v2.mp3")
+            from .captions import words_from_alignment, draw_karaoke, scene_boundaries
+            words=words_from_alignment(alignment)
+            starts=scene_boundaries(alignment,SCENES)
+        else:
+            audio=make_voice(narration,folder/"voice-motion.mp3")
         engine="elevenlabs-v2"
     else:
         raise RuntimeError("This production test requires a configured natural voice")
@@ -129,11 +135,19 @@ def render(folder,version=1):
     try:
         import bisect
         for i in range(int(total*9)):
-            moment=i/9;shot=min(17,bisect.bisect_right(cuts,moment)-1)
-            prog=(moment-cuts[shot])/max(.1,cuts[shot+1]-cuts[shot])
-            proc.stdin.write(frame(shot,max(0,min(1,prog))).tobytes())
+            moment=i/9
+            if karaoke:
+                shot=min(len(SCENES)-1,max(0,bisect.bisect_right(starts,moment)-1))
+                end=starts[shot+1] if shot+1<len(starts) else total
+                prog=(moment-starts[shot])/max(.1,end-starts[shot])
+            else:
+                shot=min(17,bisect.bisect_right(cuts,moment)-1)
+                prog=(moment-cuts[shot])/max(.1,cuts[shot+1]-cuts[shot])
+            image=frame(shot,max(0,min(1,prog)))
+            if karaoke: draw_karaoke(image,words,moment)
+            proc.stdin.write(image.tobytes())
         proc.stdin.close();err=proc.stderr.read().decode(errors="replace");ret=proc.wait(timeout=45)
         if ret:raise RuntimeError("ffmpeg error: "+err[:170])
     except Exception:
         proc.kill();proc.wait();raise
-    return {"video_path":str(output),"duration":duration(output),"voice_engine":engine,"shots":18,"visual_style":"animated concept UI","production_quality":False}
+    return {"video_path":str(output),"duration":duration(output),"voice_engine":engine,"shots":18,"visual_style":"premium motion + 2-word mint karaoke" if karaoke else "animated concept UI","production_quality":False,"karaoke_aligned":karaoke}
