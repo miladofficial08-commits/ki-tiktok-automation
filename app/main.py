@@ -313,6 +313,8 @@ def start_background_services():
     start_voice_test()
     from .motion_once import start as start_motion_once
     start_motion_once()
+    from .brand_v2_once import start as start_brand_v2_once
+    start_brand_v2_once()
 
 @api.get("/api/status", dependencies=[Depends(auth)])
 def studio_status():
