@@ -65,7 +65,7 @@ def send_message(message: str) -> bool:
     except (httpx.HTTPError, ValueError):
         return False
 
-def send_video(video_path: str, caption: str) -> bool:
+def send_video(video_path: str, caption: str, reply_markup: dict | None = None) -> bool:
     chat_id = paired_chat_id()
     path = Path(video_path)
     if not _bot_token() or not chat_id or not path.is_file():
@@ -78,7 +78,7 @@ def send_video(video_path: str, caption: str) -> bool:
         with httpx.Client(timeout=180) as client, path.open("rb") as f:
             response = client.post(
                 _api("sendVideo"),
-                data={"chat_id": str(chat_id), "caption": caption[:850], "supports_streaming": "true"},
+                data={"chat_id": str(chat_id), "caption": caption[:850], "supports_streaming": "true", **({"reply_markup": json.dumps(reply_markup)} if reply_markup else {})},
                 files={"video": ("vorschau.mp4", f, "video/mp4")},
             )
             response.raise_for_status()
@@ -102,7 +102,12 @@ def notify_production(job: dict) -> dict:
         "TikTok-Upload: NICHT aktiviert."
     )
     msg_ok = send_message(status)
-    video_ok = send_video(job.get("render", {}).get("video_path", ""), "Technische Videovorschau. Noch nicht publikationstauglich. Kein TikTok-Upload.")
+    from . import approvals
+    record = approvals.register(job)
+    video_ok = send_video(job.get("render", {}).get("video_path", ""),
+       "Technische Vorschau. Bei Posten wird NUR eine Freigabe gespeichert, NICHT veröffentlicht.",
+       reply_markup=approvals.keyboard(job["job_id"], record["version"]))
+    approvals.delivered(job["job_id"], video_ok)
     if not video_ok:
         send_message("Hinweis: Videodatei konnte nicht an Telegram uebermittelt werden.")
     return {"message": msg_ok, "video": video_ok}
@@ -119,6 +124,31 @@ def _offset_value() -> int:
         return 0
 
 def _handle(update: dict):
+    callback = update.get("callback_query")
+    if callback:
+        chat = (callback.get("message") or {}).get("chat") or {}
+        if chat.get("type") != "private" or int(chat.get("id") or 0) != paired_chat_id():
+            return
+        data = str(callback.get("data", ""))
+        from . import approvals
+        parts = data.split(":")
+        if len(parts) != 4 or parts[0] != "review":
+            return
+        try:
+            version = int(parts[3])
+        except ValueError:
+            return
+        success, message, revision = approvals.decide(parts[2], version, parts[1])
+        try:
+            with httpx.Client(timeout=12) as client:
+                client.post(_api("answerCallbackQuery"), data={"callback_query_id": callback["id"], "text": message[:190], "show_alert": "false"})
+        except (httpx.HTTPError, KeyError):
+            pass
+        if success:
+            send_message(message)
+            if revision:
+                threading.Thread(target=_render_revision, args=(revision,), daemon=True).start()
+        return
     message = update.get("message") or {}
     chat = message.get("chat") or {}
     if chat.get("type") != "private" or not isinstance(message.get("text"), str):
@@ -157,7 +187,7 @@ def polling_loop():
                         continue
                 r = client.get(_api("getUpdates"), params={
                     "offset": offset, "timeout": 24,
-                    "allowed_updates": json.dumps(["message"]),
+                    "allowed_updates": json.dumps(["message", "callback_query"]),
                     "limit": 20
                 })
                 if r.status_code != 200:
@@ -181,3 +211,18 @@ def polling_loop():
 
 def start_polling():
     threading.Thread(target=polling_loop, name="telegram-poll", daemon=True).start()
+
+
+def _render_revision(record: dict):
+    """Request a new render with a versioned angle. Publishing is never attempted."""
+    from .main import Candidate, ProduceRequest, produce
+    old = record["candidate"].copy()
+    next_version = record["version"] + 1
+    old["id"] = str(old["id"]).split("-v")[0] + f"-v{next_version}"
+    old["title"] = str(old["title"])[:110] + f" – andere Perspektive (V{next_version})"
+    try:
+        result = produce(ProduceRequest(candidate=Candidate(**old)))
+        if not (result.get("telegram") or {}).get("video"):
+            send_message("Neue Version konnte nicht an Telegram gesendet werden. Kein Upload.")
+    except Exception:
+        send_message("Überarbeitung fehlgeschlagen. Kein TikTok-Upload.")
