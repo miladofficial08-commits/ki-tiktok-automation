@@ -220,7 +220,9 @@ def produce(request: ProduceRequest):
         output = {"job_id": identifier, "candidate": topic, "render": clip, "qa": quality,
                   "status": "blocked_quality_review", "published": False, "scheduled": False}
         manifest.write_text(json.dumps(output, ensure_ascii=False, indent=2), encoding="utf-8")
-        telegram_notice(output)
+        from .notifications import notify_production
+        output["telegram"] = notify_production(output)
+        manifest.write_text(json.dumps(output, ensure_ascii=False, indent=2), encoding="utf-8")
         return output
     finally:
         production_lock.release()
@@ -234,3 +236,23 @@ def get_job(job_id: str):
     if not manifest.is_file():
         raise HTTPException(status_code=404, detail="Not found")
     return json.loads(manifest.read_text(encoding="utf-8"))
+
+# Native daily scheduling is a fallback; n8n orchestration can replace it after API setup.
+@api.on_event("startup")
+def start_background_services():
+    from .notifications import start_polling
+    from .scheduler import start_scheduler
+    start_polling()
+    start_scheduler()
+
+@api.get("/api/status", dependencies=[Depends(auth)])
+def studio_status():
+    from .notifications import configured, paired_chat_id
+    return {
+        "studio": "online",
+        "telegram_token_configured": bool(os.getenv("TELEGRAM_BOT_TOKEN")),
+        "telegram_paired": paired_chat_id() is not None,
+        "telegram_notifications_ready": configured(),
+        "auto_daily_enabled": os.getenv("AUTO_DAILY", "false").lower() == "true",
+        "auto_tiktok_posting": False
+    }
