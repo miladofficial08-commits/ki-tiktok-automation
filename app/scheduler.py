@@ -59,3 +59,57 @@ def scheduler_loop():
 
 def start_scheduler():
     threading.Thread(target=scheduler_loop, name="studio-scheduler", daemon=True).start()
+
+
+def first_preview_test():
+    """Exactly one engineering preview per persistent volume (no TikTok publishing)."""
+    from .main import Candidate, ProduceRequest, produce
+    marker = DATA / "first-preview-smoke-test-v1.json"
+    if marker.exists():
+        print("First preview: already attempted; skipping", flush=True)
+        return
+    # Telegram's polling thread must start before we consider this test.
+    for _ in range(24):
+        if notifications.configured():
+            break
+        time.sleep(5)
+    else:
+        print("First preview: Telegram pairing not detected; not running", flush=True)
+        return
+    _write = {"started_at": datetime.now(TIMEZONE).isoformat(),
+              "status": "attempted", "published": False}
+    marker.write_text(json.dumps(_write), encoding="utf-8")
+    notifications.send_message(
+        "KI Studio: erster technischer End-to-End-Test gestartet. "
+        "Ich erstelle eine DEMO-Vorschau und sende sie dir hier. Kein TikTok-Upload."
+    )
+    try:
+        candidate = Candidate(
+            id="initial-demo-20261017",
+            title="Technischer Test: So koennte eine KI-Automation funktionieren",
+            url="https://github.com/miladofficial08-commits/ki-tiktok-automation",
+            score=0,
+            source="internal_demo",
+        )
+        result = produce(ProduceRequest(candidate=candidate))
+        _write.update({
+            "status": "completed",
+            "job_id": result.get("job_id"),
+            "telegram": result.get("telegram", {}),
+            "quality_ok": result.get("qa", {}).get("ok", False),
+        })
+        marker.write_text(json.dumps(_write), encoding="utf-8")
+        print("First preview result: " + json.dumps(_write), flush=True)
+    except Exception as exc:
+        _write.update({"status": "failed", "error_class": type(exc).__name__})
+        marker.write_text(json.dumps(_write), encoding="utf-8")
+        print("First preview failed: " + type(exc).__name__, flush=True)
+        notifications.send_message(
+            "KI Studio: Erster Video-Rendertest fehlgeschlagen. "
+            "Ich muss den Fehler in Railway untersuchen. Kein TikTok-Upload."
+        )
+
+
+def start_first_preview_test():
+    if os.getenv("AUTO_FIRST_PREVIEW", "false").lower() == "true":
+        threading.Thread(target=first_preview_test, name="first-preview-smoke", daemon=True).start()
