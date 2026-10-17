@@ -25,7 +25,7 @@ def make_voice(text: str, target: Path) -> Path:
         res=client.post(endpoint,headers={"xi-api-key":os.environ["ELEVENLABS_API_KEY"],"content-type":"application/json","accept":"audio/mpeg"},json={
             "text":text,
             "model_id":os.getenv("ELEVENLABS_MODEL","eleven_multilingual_v2"),
-            "voice_settings":{"stability":0.55,"similarity_boost":0.75}
+            "voice_settings":{"stability":float(os.getenv("ELEVENLABS_STABILITY","0.36")),"similarity_boost":float(os.getenv("ELEVENLABS_SIMILARITY","0.77")),"style":float(os.getenv("ELEVENLABS_STYLE","0.38")),"speed":float(os.getenv("ELEVENLABS_SPEED","1.05")),"use_speaker_boost":True}
         })
         if res.status_code!=200:
             # Do not include response body: API may echo sensitive request information.
