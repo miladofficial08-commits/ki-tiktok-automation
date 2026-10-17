@@ -271,6 +271,36 @@ def produce_motion():
         production_lock.release()
 
 
+@api.post("/api/produce-karaoke-v2", dependencies=[Depends(auth)])
+def produce_karaoke_v2():
+    """Review-only new caption treatment; no TikTok publishing."""
+    if not production_lock.acquire(blocking=False):
+        raise HTTPException(429, "Another render is running")
+    try:
+        from . import motion
+        tag = "brand-v2-karaoke-20261017"
+        job_id = hashlib.sha256(tag.encode()).hexdigest()[:16]
+        folder = DATA / "runs" / job_id
+        manifest = folder / "manifest.json"
+        if manifest.is_file():
+            return json.loads(manifest.read_text(encoding="utf-8"))
+        folder.mkdir(parents=True, exist_ok=True)
+        clip = motion.render(folder, karaoke=True)
+        quality = {"ok":False, "reasons":["Markendesign in Prüfung","Animierte Konzept-App, keine echte Anwendung"],"auto_publish":False}
+        candidate = {"id":tag,"title":"Brand Prototype V2 – grüner Karaoke-Untertitel (Konzeptdemo)",
+                     "url":"https://github.com/miladofficial08-commits/ki-tiktok-automation",
+                     "source":"internal_studio_demo","score":0}
+        output={"job_id":job_id,"candidate":candidate,"render":clip,"qa":quality,
+                "status":"pending_review","published":False,"scheduled":False}
+        manifest.write_text(json.dumps(output,ensure_ascii=False,indent=2),encoding="utf-8")
+        from .notifications import notify_production
+        output["telegram"]=notify_production(output)
+        manifest.write_text(json.dumps(output,ensure_ascii=False,indent=2),encoding="utf-8")
+        return output
+    finally:
+        production_lock.release()
+
+
 # Native daily scheduling is a fallback; n8n orchestration can replace it after API setup.
 @api.on_event("startup")
 def start_background_services():
