@@ -86,6 +86,27 @@ def send_video(video_path: str, caption: str, reply_markup: dict | None = None) 
     except (OSError, httpx.HTTPError, ValueError):
         return False
 
+def send_audio(audio_path: str, caption: str) -> bool:
+    """Send one existing MP3 to the already paired private Telegram chat."""
+    chat_id = paired_chat_id()
+    path = Path(audio_path)
+    if not chat_id or not _bot_token() or not path.is_file():
+        return False
+    if path.stat().st_size > 12 * 1024 * 1024:
+        return False
+    try:
+        with httpx.Client(timeout=90) as client, path.open("rb") as audio:
+            response = client.post(
+                _api("sendAudio"),
+                data={"chat_id": str(chat_id), "caption": caption[:850], "title": "KI-Stimme – Test"},
+                files={"audio": ("stimmprobe.mp3", audio, "audio/mpeg")},
+            )
+            response.raise_for_status()
+            return bool(response.json().get("ok"))
+    except (OSError, httpx.HTTPError, ValueError):
+        return False
+
+
 def notify_production(job: dict) -> dict:
     if not configured():
         return {"message": False, "video": False, "reason": "Telegram noch nicht gekoppelt"}
