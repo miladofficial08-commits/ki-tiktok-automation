@@ -354,6 +354,8 @@ def start_background_services():
     start_motion_once()
     from .brand_v2_once import start as start_brand_v2_once
     start_brand_v2_once()
+    from .agent_v3_once import start as start_agent_v3
+    start_agent_v3()
 
 @api.get("/api/status", dependencies=[Depends(auth)])
 def studio_status():
