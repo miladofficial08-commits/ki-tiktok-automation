@@ -247,8 +247,9 @@ def start_background_services():
 
 @api.get("/api/status", dependencies=[Depends(auth)])
 def studio_status():
-    from .notifications import configured, paired_chat_id
+    from .notifications import configured, paired_chat_id, telegram_diagnostics
     return {
+        "telegram_diagnostics": telegram_diagnostics(),
         "studio": "online",
         "telegram_token_configured": bool(os.getenv("TELEGRAM_BOT_TOKEN")),
         "telegram_paired": paired_chat_id() is not None,
