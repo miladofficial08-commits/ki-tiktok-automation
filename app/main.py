@@ -241,9 +241,10 @@ def get_job(job_id: str):
 @api.on_event("startup")
 def start_background_services():
     from .notifications import start_polling
-    from .scheduler import start_scheduler
+    from .scheduler import start_scheduler, start_first_preview_test
     start_polling()
     start_scheduler()
+    start_first_preview_test()
 
 @api.get("/api/status", dependencies=[Depends(auth)])
 def studio_status():
